@@ -6,13 +6,12 @@ void SetVcoreUp (unsigned int level);
  * main.c
  */
 
-unsigned int ADC_Result[64];
+unsigned int ADC_Result[64]; //A1 is evens, A0 is odds
 
 void main(void) {
-    volatile unsigned long j;	// Declare counter variable
-	unsigned char i;
+	unsigned int i,j;
 	unsigned int ADC_Result_sum;
-	unsigned int ADC_Result_Average;
+	unsigned int ADC_Result_Average[2];
 
     WDTCTL = WDTPW | WDTHOLD;	// Stop watchdog timer
 
@@ -73,7 +72,7 @@ void main(void) {
 
     // Configure ADC10 - pulse sample mode; software trigger;
     ADC10CTL0 = ADC10SHT_2 + ADC10ON + ADC10MSC; // 16ADCclks, ADC on
-    ADC10CTL1 = ADC10SHP + ADC10CONSEQ_2;     // pulse sample mode, rpt single ch
+    ADC10CTL1 = ADC10SHP + ADC10CONSEQ_3;     // Sampling timer, rpt seq of ch
     ADC10CTL2 = ADC10RES;                     // 10-bits of resolution
     ADC10MCTL0 = ADC10INCH_1;                 // AVCC ref, A1
 
@@ -81,26 +80,33 @@ void main(void) {
     DMACTL0 = DMA0TSEL_24;                    // ADC10IFG trigger
     __data16_write_addr((unsigned short) &DMA0SA,(unsigned long) &ADC10MEM0);
                                               // Source single address
-    __data16_write_addr((unsigned short) &DMA0DA,(unsigned long) &ADC_Result[0]);
-                                              // Destination array address
-    DMA0SZ = 64;                              // 64 conversions
+    DMA0SZ = 0x02;                              // 64 conversions
     DMA0CTL = DMADT_4 + DMADSTINCR_3 + DMAEN + DMAIE; // Rpt, inc dest, word access,
                                               // enable int after 64 conversions
 
     for (;;) {									// Infinite loop, blink LED
 
-    	ADC10CTL0 |= ADC10ENC + ADC10SC;      // Sampling and conversion start
-    	ADC_Result_sum = 0x0;                   // clear accumulate register
-    	for(i=0;i<64;i++)
-    		ADC_Result_sum += ADC_Result[i];
-    	ADC_Result_Average = ADC_Result_sum>>6; // Average of 64 conversions resultsads
+    	for(i=0;i<32;i++){
+          __data16_write_addr((unsigned short) &DMA0DA,(unsigned long) &ADC_Result[i*2]);
+                                            // Update destination array address         
+          while (ADC10CTL1 & BUSY);           // Wait if ADC10 core is active
+          ADC10CTL0 |= ADC10ENC + ADC10SC;    // Sampling and conversion ready
+          __no_operation();                   // BREAKPOINT; check ADC_Result
+
+    	}
+    	for(j=0;j<2;j++){
+    		ADC_Result_sum = 0x0;                   // clear accumulate register
+    		for(i=0;i<64;i=i+2){
+    			ADC_Result_sum += ADC_Result[i+j];
+    		}
+    		ADC_Result_Average[j] = ADC_Result_sum>>5; // Average of 32 conversions resultsads
+    	}
 
     	//TD0CCR1 = ADC_Result_Average + 500;
 
-     	j = 1000000;
-     	do(j--);
-     	while(j != 0);						// Wait 10000 cycles
-     }
+    __delay_cycles(50000);                   // delay before next 64 conversions
+    __no_operation();                   // BREAKPOINT; check ADC_Result
+    }
 }
 
 #pragma vector=DMA_VECTOR
