@@ -1,17 +1,32 @@
 #include <msp430.h>
 
 void SetVcoreUp (unsigned int level);
-
+void Perturb (unsigned int dir);
 /*
  * main.c
+ *
+ * Teddy Lowe and Mike Batbayar, 9/3/2016
+ *
  */
 
-unsigned int ADC_Result[64]; //A1 is evens, A0 is odds
+// MPPT tuning parameters
+#define BATvMAX             340                 // 14.0V with our voltage sense circuit
+#define OVERCHARGE_WAIT     100000000000        // Large number used to wait to check if charged
+#define INITIAL_PWM         1400                // Initial Duty cycle when buck starts 1400/2000 = 60%
+#define SWEEPTIME           5                   // Sweep time 
+#define PERTURBTIME         0                   // Time between perturb/observe cycles
+#define DELTA_D             50                  // Change between duty cycles for perturb
+
+unsigned int ADC_Result[64];                    // A1 is evens, A0 is odds
+volatile unsigned int last_duty;
 
 void main(void) {
 	unsigned int i,j;
 	unsigned int ADC_Result_sum;
 	unsigned int ADC_Result_Average[2];
+    unsigned int direction = 1;                // 1 is up, 0 is down
+    unsigned int prev_I = 0;
+    unsigned int this_I = 0;
 
     WDTCTL = WDTPW | WDTHOLD;	// Stop watchdog timer
 
@@ -21,10 +36,7 @@ void main(void) {
     P1DIR |= BIT7;
     P2SEL |= BIT0;				// Set P2.0 to output direction (Timer D0.2 output)
     P2DIR |= BIT0;
-    //P1DIR |= 0x01;				// Set P1.0 to output direction (to drive LED)
-    //P1OUT |= 0x01;				// Set P1.0  - turn LED on
     __delay_cycles(500000);
-    //P1OUT ^= 0x01;				// Toggle P1.0 using exclusive-or function  - turn LED off
 
     // Increase Vcore setting to level3 to support fsystem=25MHz
     // NOTE: Change core voltage one level at a time..
@@ -57,17 +69,15 @@ void main(void) {
     		   TDHEN;     					  // Hi-res enable
 
     // Wait some, allow hi-res clock to lock
-    //P1OUT ^= 0x01;							  // Toggle P1.0 using exclusive-OR, turn LED on
-    // __delay_cycles(500000);
+    __delay_cycles(500000);
     while(!TDHLKIFG);					      // Wait until hi-res clock is locked
-    //P1OUT ^= 0x01;							  // Toggle P1.0 using exclusive-OR, turn LED off
 
     // Configure the CCRx blocks
     TD0CCR0 = 2000;                           // PWM Period. So sw freq = 200MHz/2000 = 100 kHz
     TD0CCTL1 = OUTMOD_7 + CLLD_1;             // CCR1 reset/set
-    TD0CCR1 = 1550;                           // CCR1 PWM duty cycle of 1900/2000 = 95%
+    TD0CCR1 = INITIAL_PWM;                    // CCR1 BUCK initial PWM duty cycle
     TD0CCTL2 = OUTMOD_7 + CLLD_1;             // CCR2 reset/set
-    TD0CCR2 = 1000;                            // CCR2 PWM duty cycle of 1000/2000 = 50%
+    TD0CCR2 = 1000;                           // CCR2 PWM duty cycle of 1000/2000 = 50%
     TD0CTL0 |= MC_1 + TDCLR;                  // up-mode, clear TDR, Start timer
 
     // Configure ADC10; pulse sample mode, s/w trigger, rpt seq of channels
@@ -84,7 +94,7 @@ void main(void) {
     DMA0CTL = DMADT_4 + DMADSTINCR_3 + DMAEN + DMAIE; 
                                             // Rpt, inc dest, byte access, 
                                             
-    while(1) {									// Infinite loop, blink LED
+    while(1) {									// Infinite loop, MPPT
 
         for(i=0;i<32;i++)
         {
@@ -96,18 +106,38 @@ void main(void) {
 
         }
 
-    	for(j=0;j<2;j++){
-    		ADC_Result_sum = 0x0;                   // clear accumulate register
-    		for(i=0;i<64;i=i+2){
-    			ADC_Result_sum += ADC_Result[i+j];
+    	for(j=0;j<2;j++)
+        {
+    		
+            ADC_Result_sum = 0x0;                       // clear accumulate register
+    		
+            for(i=0;i<64;i=i+2)
+            {
+    			ADC_Result_sum += ADC_Result[i+j];       // Alternate even/odd elements
     		}
-    		ADC_Result_Average[j] = ADC_Result_sum>>5; // Average of 32 conversions resultsads
+
+    		ADC_Result_Average[j] = ADC_Result_sum>>5;    // Average of 32 conversions resultsads
     	}
 
-    	//TD0CCR1 = ADC_Result_Average + 500;
+        if (ADC_Result_Average[1] >= BATvMAX)
+        {
+            TD0CCR1 = 0;
+            for (i = 0; i <= OVERCHARGE_WAIT; i++);
+        }
+        
+        else
+        {
+            prev_I = this_I;
+            this_I = ADC_Result_Average[0];
+            
+            if (prev_I > this_I)
+            {
+                direction = !direction;
+            }
 
-    __delay_cycles(50000);                   // delay before next 64 conversions
-    __no_operation();                   // BREAKPOINT; check ADC_Result
+            Perturb(direction);
+        }
+        __no_operation();                   // BREAKPOINT
     }
 }
 
@@ -157,4 +187,32 @@ void SetVcoreUp (unsigned int level)
     SVSMLCTL = SVSLE + SVSLRVL0 * level + SVMLE + SVSMLRRL0 * level;
     // Lock PMM registers for write access
     PMMCTL0_H = 0x00;
+}
+
+void Perturb (unsigned int dir)
+{
+    unsigned int buff;
+    //Subroutine to change duty cycle
+    if (dir > 1 || dir < 0)
+    {
+        return;
+    }
+    if (dir)
+    {
+        buff = TD0CCR1;
+        TD0CCR1 = buff + DELTA_D;
+    }
+    else if (!dir)
+    {
+        buff = TD0CCR1;
+        TD0CCR1 = buff - DELTA_D;
+    }
+    
+    buff = PERTURBTIME;
+    
+    while(buff)
+    {
+        buff--;
+    }
+    return;
 }
