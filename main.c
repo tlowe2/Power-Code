@@ -21,10 +21,10 @@ void main(void) {
     P1DIR |= BIT7;
     P2SEL |= BIT0;				// Set P2.0 to output direction (Timer D0.2 output)
     P2DIR |= BIT0;
-    P1DIR |= 0x01;				// Set P1.0 to output direction (to drive LED)
-    P1OUT |= 0x01;				// Set P1.0  - turn LED on
+    //P1DIR |= 0x01;				// Set P1.0 to output direction (to drive LED)
+    //P1OUT |= 0x01;				// Set P1.0  - turn LED on
     __delay_cycles(500000);
-    P1OUT ^= 0x01;				// Toggle P1.0 using exclusive-or function  - turn LED off
+    //P1OUT ^= 0x01;				// Toggle P1.0 using exclusive-or function  - turn LED off
 
     // Increase Vcore setting to level3 to support fsystem=25MHz
     // NOTE: Change core voltage one level at a time..
@@ -57,10 +57,10 @@ void main(void) {
     		   TDHEN;     					  // Hi-res enable
 
     // Wait some, allow hi-res clock to lock
-    P1OUT ^= 0x01;							  // Toggle P1.0 using exclusive-OR, turn LED on
+    //P1OUT ^= 0x01;							  // Toggle P1.0 using exclusive-OR, turn LED on
     // __delay_cycles(500000);
     while(!TDHLKIFG);					      // Wait until hi-res clock is locked
-    P1OUT ^= 0x01;							  // Toggle P1.0 using exclusive-OR, turn LED off
+    //P1OUT ^= 0x01;							  // Toggle P1.0 using exclusive-OR, turn LED off
 
     // Configure the CCRx blocks
     TD0CCR0 = 2000;                           // PWM Period. So sw freq = 200MHz/2000 = 100 kHz
@@ -70,30 +70,32 @@ void main(void) {
     TD0CCR2 = 1000;                            // CCR2 PWM duty cycle of 1000/2000 = 50%
     TD0CTL0 |= MC_1 + TDCLR;                  // up-mode, clear TDR, Start timer
 
-    // Configure ADC10 - pulse sample mode; software trigger;
-    ADC10CTL0 = ADC10SHT_2 + ADC10ON + ADC10MSC; // 16ADCclks, ADC on
+    // Configure ADC10; pulse sample mode, s/w trigger, rpt seq of channels
+    ADC10CTL0 = ADC10SHT_2 + ADC10MSC + ADC10ON;  // 16ADCclks, ADC on
     ADC10CTL1 = ADC10SHP + ADC10CONSEQ_3;     // Sampling timer, rpt seq of ch
-    ADC10CTL2 = ADC10RES;                     // 10-bits of resolution
-    ADC10MCTL0 = ADC10INCH_1;                 // AVCC ref, A1
-
-    // Configure DMA (ADC10IFG trigger)
+    ADC10CTL2 = ADC10RES;                     // 10-bit resolution
+    ADC10MCTL0 = ADC10INCH_1;                 // AVCC ref, A0, A1(EOS)
+  
+    // Configure DMA0 (ADC10IFG trigger)
     DMACTL0 = DMA0TSEL_24;                    // ADC10IFG trigger
     __data16_write_addr((unsigned short) &DMA0SA,(unsigned long) &ADC10MEM0);
-                                              // Source single address
-    DMA0SZ = 0x02;                              // 64 conversions
-    DMA0CTL = DMADT_4 + DMADSTINCR_3 + DMAEN + DMAIE; // Rpt, inc dest, word access,
-                                              // enable int after 64 conversions
+                                            // Source single address  
+    DMA0SZ = 0x02;                            // 2x32 conversions 
+    DMA0CTL = DMADT_4 + DMADSTINCR_3 + DMAEN + DMAIE; 
+                                            // Rpt, inc dest, byte access, 
+                                            
+    while(1) {									// Infinite loop, blink LED
 
-    for (;;) {									// Infinite loop, blink LED
+        for(i=0;i<32;i++)
+        {
+            __data16_write_addr((unsigned short) &DMA0DA,(unsigned long) &ADC_Result[i*2]);
+                                                // Update destination array address         
+            while (ADC10CTL1 & BUSY);           // Wait if ADC10 core is active
+            ADC10CTL0 |= ADC10ENC + ADC10SC;    // Sampling and conversion ready
+            __bis_SR_register(CPUOFF + GIE);    // LPM0, ADC10_ISR will force exit
 
-    	for(i=0;i<32;i++){
-          __data16_write_addr((unsigned short) &DMA0DA,(unsigned long) &ADC_Result[i*2]);
-                                            // Update destination array address         
-          while (ADC10CTL1 & BUSY);           // Wait if ADC10 core is active
-          ADC10CTL0 |= ADC10ENC + ADC10SC;    // Sampling and conversion ready
-          __no_operation();                   // BREAKPOINT; check ADC_Result
+        }
 
-    	}
     	for(j=0;j<2;j++){
     		ADC_Result_sum = 0x0;                   // clear accumulate register
     		for(i=0;i<64;i=i+2){
@@ -115,10 +117,11 @@ __interrupt void DMA0_ISR (void)
   switch(__even_in_range(DMAIV,16))
   {
     case  0: break;                          // No interrupt
-    case  2:
-      // 64 conversions complete
-    	ADC10CTL0 &= ~ADC10ENC;
-    	break;                                 // DMA0IFG
+    case  2: 
+        // sequence of conversions complete
+        ADC10CTL0 &= ~ADC10ENC;                // Disable ADC conversion
+        __bic_SR_register_on_exit(CPUOFF);     // exit LPM
+        break;                                 // DMA0IFG
     case  4: break;                          // DMA1IFG
     case  6: break;                          // DMA2IFG
     case  8: break;                          // Reserved
@@ -126,9 +129,10 @@ __interrupt void DMA0_ISR (void)
     case 12: break;                          // Reserved
     case 14: break;                          // Reserved
     case 16: break;                          // Reserved
-    default: break;
-  }
+    default: break; 
+  }   
 }
+
 
 
 void SetVcoreUp (unsigned int level)
