@@ -1,7 +1,7 @@
 #include <msp430.h>
 
 void SetVcoreUp (unsigned int level);
-void Perturb (unsigned int dir);
+void Perturb (int dir);
 /*
  * main.c
  *
@@ -11,11 +11,11 @@ void Perturb (unsigned int dir);
 
 // MPPT tuning parameters
 #define BATvMAX             340                 // 14.0V with our voltage sense circuit
-#define OVERCHARGE_WAIT     100000000000        // Large number used to wait to check if charged
+#define OVERCHARGE_WAIT     10000000        // Large number used to wait to check if charged
 #define INITIAL_PWM         1400                // Initial Duty cycle when buck starts 1400/2000 = 60%
 #define SWEEPTIME           5                   // Sweep time 
-#define PERTURBTIME         0                   // Time between perturb/observe cycles
-#define DELTA_D             50                  // Change between duty cycles for perturb
+#define PERTURBTIME         25000000                  // Time between perturb/observe cycles
+#define DELTA_D             20                  // Change between duty cycles for perturb
 
 unsigned int ADC_Result[64];                    // A1 is evens, A0 is odds
 volatile unsigned int last_duty;
@@ -24,7 +24,7 @@ void main(void) {
 	unsigned int i,j;
 	unsigned int ADC_Result_sum;
 	unsigned int ADC_Result_Average[2];
-    unsigned int direction = 1;                // 1 is up, 0 is down
+    int direction = 1;                // 1 is up, 0 is down
     unsigned int prev_I = 0;
     unsigned int this_I = 0;
 
@@ -118,15 +118,16 @@ void main(void) {
 
     		ADC_Result_Average[j] = ADC_Result_sum>>5;    // Average of 32 conversions resultsads
     	}
-
+/*
         if (ADC_Result_Average[1] >= BATvMAX)
         {
-            TD0CCR1 = 0;
+            //TD0CCR1 = 0;
             for (i = 0; i <= OVERCHARGE_WAIT; i++);
+            __no_operation();                   // BREAKPOINT
+
         }
-        
         else
-        {
+        {*/
             prev_I = this_I;
             this_I = ADC_Result_Average[0];
             
@@ -136,7 +137,7 @@ void main(void) {
             }
 
             Perturb(direction);
-        }
+        //}
         __no_operation();                   // BREAKPOINT
     }
 }
@@ -189,30 +190,43 @@ void SetVcoreUp (unsigned int level)
     PMMCTL0_H = 0x00;
 }
 
-void Perturb (unsigned int dir)
+void Perturb (int dir)
 {
-    unsigned int buff;
+    int buff;
+    //long count;
     //Subroutine to change duty cycle
     if (dir > 1 || dir < 0)
     {
         return;
     }
+    buff = TD0CCR1;
+    
     if (dir)
     {
-        buff = TD0CCR1;
-        TD0CCR1 = buff + DELTA_D;
+        buff = buff + DELTA_D;
+        if (buff > 2000)
+        {
+            buff = 2000;
+        }
+
+        TD0CCR1 = buff;
     }
     else if (!dir)
     {
-        buff = TD0CCR1;
-        TD0CCR1 = buff - DELTA_D;
+        buff = buff - DELTA_D;
+        if (buff < 0)
+        {
+            buff = 0;
+        }
+        TD0CCR1 = buff;
     }
     
-    buff = PERTURBTIME;
+    /*count = PERTURBTIME;
     
-    while(buff)
+    while(count)
     {
-        buff--;
-    }
+        count--;
+    }*/
+    __delay_cycles(PERTURBTIME);
     return;
 }
