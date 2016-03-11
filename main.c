@@ -16,8 +16,8 @@ int Sweep (void);
 #define BATvMAX             350                 // 14.0V with our voltage sense circuit
 #define OVERCHARGE_WAIT     10000000            // Large number used to wait to check if charged
 #define INITIAL_PWM         1400                // Initial Duty cycle when buck starts 1400/2000 = 60%
-#define SWEEPTIME           300                 // Sweep time 
-#define SWEEPSTART          1000                // Beginning of sweep
+#define SWEEPTIME           1500                // Sweep time
+#define SWEEPSTART          500	                // Beginning of sweep
 #define PERTURBTIME         1000000	            // Time between perturb/observe cycles
 #define DELTA_D             5                   // Change between duty cycles for perturb
 
@@ -239,9 +239,9 @@ int Perturb (int dir)
     else if (!dir)
     {
         buff = buff - DELTA_D;
-        if (buff < 0)
+        if (buff < SWEEPSTART)
         {
-            buff = 0;
+            buff = SWEEPSTART;
         }
         TD0CCR1 = buff;
     }
