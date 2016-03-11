@@ -13,13 +13,13 @@ int Sweep (void);
  */
 
 // MPPT tuning parameters
-#define BATvMAX             500                 // 14.0V with our voltage sense circuit
+#define BATvMAX             350                 // 14.0V with our voltage sense circuit
 #define OVERCHARGE_WAIT     10000000            // Large number used to wait to check if charged
 #define INITIAL_PWM         1400                // Initial Duty cycle when buck starts 1400/2000 = 60%
 #define SWEEPTIME           300                 // Sweep time 
-#define SWEEPSTART          1400                // Beginning of sweep
-#define PERTURBTIME         25000000            // Time between perturb/observe cycles
-#define DELTA_D             20                  // Change between duty cycles for perturb
+#define SWEEPSTART          1000                // Beginning of sweep
+#define PERTURBTIME         1000000	            // Time between perturb/observe cycles
+#define DELTA_D             5                   // Change between duty cycles for perturb
 
 unsigned int ADC_Result[64];                    // A1 is evens, A0 is odds
 volatile unsigned int voltage, current;
@@ -30,7 +30,7 @@ void main(void) {
     unsigned int prev_I = 0;
     unsigned int this_I = 0;
     int current_duty = INITIAL_PWM;
-    int sweepcount = 0;
+    int sweepcount = SWEEPTIME;
 
     WDTCTL = WDTPW | WDTHOLD;	// Stop watchdog timer
 
@@ -106,8 +106,8 @@ void main(void) {
 
         if (voltage >= BATvMAX)
         {
-            TD0CCR1 = 0;
-            for (i = 0; i <= OVERCHARGE_WAIT; i++);
+            //TD0CCR1 = 0;
+            //for (i = 0; i <= OVERCHARGE_WAIT; i++);
             __no_operation();                   // BREAKPOINT
 
         }
@@ -211,8 +211,8 @@ void adcRead (void)
         ADC_Result_Average[j] = ADC_Result_sum>>5;    // Average of 32 conversions resultsads
     }
 
-    voltage = ADC_Result_Average[1];
-    current = ADC_Result_Average[0];
+    voltage = ADC_Result_Average[0];
+    current = ADC_Result_Average[1];
 }
 
 int Perturb (int dir)
@@ -222,7 +222,7 @@ int Perturb (int dir)
     //Subroutine to change duty cycle
     if (dir > 1 || dir < 0)
     {
-        return;
+        return -1;
     }
     buff = TD0CCR1;
     
@@ -254,16 +254,28 @@ int Sweep (void)
 {
     int duty = SWEEPSTART;
     int bestduty = 0;
+    int bestcurrent = 0;
     unsigned int lastcurrent = 0;
+    int currenthold[2];
     TD0CCR1 = duty;
 
     while (duty < 2000)
     {
         adcRead();
+        currenthold[0] = current;
+        adcRead();
+        currenthold[1] = current;
+
+        current = (currenthold[1]+currenthold[0])>>1;
 
         if (current > lastcurrent)
         {
-            bestduty = duty;
+        	if (current > bestcurrent)
+        	{
+        		bestcurrent = current;
+                bestduty = duty;
+                __no_operation();
+        	}
         }
 
         lastcurrent = current;
