@@ -1,7 +1,10 @@
 #include <msp430.h>
 
 void SetVcoreUp (unsigned int level);
-void Perturb (int dir);
+int Perturb (int dir);
+void adcRead(void);
+int Sweep (void);
+
 /*
  * main.c
  *
@@ -10,23 +13,24 @@ void Perturb (int dir);
  */
 
 // MPPT tuning parameters
-#define BATvMAX             340                 // 14.0V with our voltage sense circuit
-#define OVERCHARGE_WAIT     10000000        // Large number used to wait to check if charged
+#define BATvMAX             500                 // 14.0V with our voltage sense circuit
+#define OVERCHARGE_WAIT     10000000            // Large number used to wait to check if charged
 #define INITIAL_PWM         1400                // Initial Duty cycle when buck starts 1400/2000 = 60%
-#define SWEEPTIME           5                   // Sweep time 
-#define PERTURBTIME         25000000                  // Time between perturb/observe cycles
+#define SWEEPTIME           300                 // Sweep time 
+#define SWEEPSTART          1400                // Beginning of sweep
+#define PERTURBTIME         25000000            // Time between perturb/observe cycles
 #define DELTA_D             20                  // Change between duty cycles for perturb
 
 unsigned int ADC_Result[64];                    // A1 is evens, A0 is odds
-volatile unsigned int last_duty;
+volatile unsigned int voltage, current;
 
 void main(void) {
-	unsigned int i,j;
-	unsigned int ADC_Result_sum;
-	unsigned int ADC_Result_Average[2];
+    unsigned int i;
     int direction = 1;                // 1 is up, 0 is down
     unsigned int prev_I = 0;
     unsigned int this_I = 0;
+    int current_duty = INITIAL_PWM;
+    int sweepcount = 0;
 
     WDTCTL = WDTPW | WDTHOLD;	// Stop watchdog timer
 
@@ -75,7 +79,7 @@ void main(void) {
     // Configure the CCRx blocks
     TD0CCR0 = 2000;                           // PWM Period. So sw freq = 200MHz/2000 = 100 kHz
     TD0CCTL1 = OUTMOD_7 + CLLD_1;             // CCR1 reset/set
-    TD0CCR1 = INITIAL_PWM;                    // CCR1 BUCK initial PWM duty cycle
+    TD0CCR1 = current_duty;                    // CCR1 BUCK initial PWM duty cycle
     TD0CCTL2 = OUTMOD_7 + CLLD_1;             // CCR2 reset/set
     TD0CCR2 = 1000;                           // CCR2 PWM duty cycle of 1000/2000 = 50%
     TD0CTL0 |= MC_1 + TDCLR;                  // up-mode, clear TDR, Start timer
@@ -93,51 +97,40 @@ void main(void) {
     DMA0SZ = 0x02;                            // 2x32 conversions 
     DMA0CTL = DMADT_4 + DMADSTINCR_3 + DMAEN + DMAIE; 
                                             // Rpt, inc dest, byte access, 
-                                            
+   
+
+    // Main MPPT loop                                         
     while(1) {									// Infinite loop, MPPT
+        
+        adcRead();
 
-        for(i=0;i<32;i++)
+        if (voltage >= BATvMAX)
         {
-            __data16_write_addr((unsigned short) &DMA0DA,(unsigned long) &ADC_Result[i*2]);
-                                                // Update destination array address         
-            while (ADC10CTL1 & BUSY);           // Wait if ADC10 core is active
-            ADC10CTL0 |= ADC10ENC + ADC10SC;    // Sampling and conversion ready
-            __bis_SR_register(CPUOFF + GIE);    // LPM0, ADC10_ISR will force exit
-
-        }
-
-    	for(j=0;j<2;j++)
-        {
-    		
-            ADC_Result_sum = 0x0;                       // clear accumulate register
-    		
-            for(i=0;i<64;i=i+2)
-            {
-    			ADC_Result_sum += ADC_Result[i+j];       // Alternate even/odd elements
-    		}
-
-    		ADC_Result_Average[j] = ADC_Result_sum>>5;    // Average of 32 conversions resultsads
-    	}
-/*
-        if (ADC_Result_Average[1] >= BATvMAX)
-        {
-            //TD0CCR1 = 0;
+            TD0CCR1 = 0;
             for (i = 0; i <= OVERCHARGE_WAIT; i++);
             __no_operation();                   // BREAKPOINT
 
         }
         else
-        {*/
+        {
             prev_I = this_I;
-            this_I = ADC_Result_Average[0];
+            this_I = current;
             
             if (prev_I > this_I)
             {
                 direction = !direction;
             }
 
-            Perturb(direction);
-        //}
+            current_duty = Perturb(direction);
+        }
+
+        sweepcount++;
+        if (sweepcount >= SWEEPTIME)
+        {
+            current_duty = Sweep();
+            TD0CCR1 = current_duty;
+            sweepcount = 0;
+        }
         __no_operation();                   // BREAKPOINT
     }
 }
@@ -165,7 +158,6 @@ __interrupt void DMA0_ISR (void)
 }
 
 
-
 void SetVcoreUp (unsigned int level)
   {
   	// Subroutine to change core voltage
@@ -190,7 +182,40 @@ void SetVcoreUp (unsigned int level)
     PMMCTL0_H = 0x00;
 }
 
-void Perturb (int dir)
+void adcRead (void)
+{
+    unsigned int i,j;
+    unsigned int ADC_Result_sum;
+    unsigned int ADC_Result_Average[2];
+
+    for(i=0;i<32;i++)
+    {
+        __data16_write_addr((unsigned short) &DMA0DA,(unsigned long) &ADC_Result[i*2]);
+                                                // Update destination array address         
+        while (ADC10CTL1 & BUSY);           // Wait if ADC10 core is active
+        ADC10CTL0 |= ADC10ENC + ADC10SC;    // Sampling and conversion ready
+        __bis_SR_register(CPUOFF + GIE);    // LPM0, ADC10_ISR will force exit
+
+    }
+
+    for(j=0;j<2;j++)
+    {
+          
+        ADC_Result_sum = 0x0;                       // clear accumulate register
+           
+        for(i=0;i<64;i=i+2)
+        {
+            ADC_Result_sum += ADC_Result[i+j];       // Alternate even/odd elements
+        }
+
+        ADC_Result_Average[j] = ADC_Result_sum>>5;    // Average of 32 conversions resultsads
+    }
+
+    voltage = ADC_Result_Average[1];
+    current = ADC_Result_Average[0];
+}
+
+int Perturb (int dir)
 {
     int buff;
     //long count;
@@ -221,12 +246,29 @@ void Perturb (int dir)
         TD0CCR1 = buff;
     }
     
-    /*count = PERTURBTIME;
-    
-    while(count)
-    {
-        count--;
-    }*/
     __delay_cycles(PERTURBTIME);
-    return;
+    return buff;
+}
+
+int Sweep (void)
+{
+    int duty = SWEEPSTART;
+    int bestduty = 0;
+    unsigned int lastcurrent = 0;
+    TD0CCR1 = duty;
+
+    while (duty < 2000)
+    {
+        adcRead();
+
+        if (current > lastcurrent)
+        {
+            bestduty = duty;
+        }
+
+        lastcurrent = current;
+        duty = Perturb(1);
+    }
+
+    return bestduty;
 }
