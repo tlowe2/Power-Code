@@ -21,6 +21,13 @@ int Sweep (void);
 #define PERTURBTIME         1000000	            // Time between perturb/observe cycles
 #define DELTA_D             5                   // Change between duty cycles for perturb
 
+ // Inverter tuning parameters
+#define INVERTCOUNT         517                 // This makes our inverter output = 60Hz
+#define ZEROTIME            450                 // This is how long the modified sine is zero for
+
+volatile int positive_toggle = 0;               // Toggles positive or negative side in timer
+volatile int count = 0;                         // Counter variable for timer interrupt
+
 unsigned int ADC_Result[64];                    // A1 is evens, A0 is odds
 volatile unsigned int voltage, current;
 
@@ -40,6 +47,14 @@ void main(void) {
     P1DIR |= BIT7;
     P2SEL |= BIT0;				// Set P2.0 to output direction (Timer D0.2 output)
     P2DIR |= BIT0;
+
+    // Setup inverter pinouts
+    P3DIR |= BIT3;                            // 3.3 for positive side
+    P3DIR |= BIT5;                            // 3.5 for negative side
+
+    P3OUT |= BIT3;                            // Start with 3.3 on
+    P3OUT &= ~BIT5;                           // Start with 3.5 off
+
     __delay_cycles(500000);
 
     // Increase Vcore setting to level3 to support fsystem=25MHz
@@ -98,6 +113,12 @@ void main(void) {
     DMA0CTL = DMADT_4 + DMADSTINCR_3 + DMAEN + DMAIE; 
                                             // Rpt, inc dest, byte access, 
    
+    // Inverter timer setup using Timer A0
+    TA0CCTL0 = CCIE;                          // CCR0 interrupt enabled
+    TA0CCR0 = 400;                             // 10 / 1.045 MHz = 9.5us
+    TA0CTL = TASSEL_2 + MC_1 + TACLR;         // SMCLK, upmode, clear TAR
+
+
 
     // Main MPPT loop                                         
     while(1) {									// Infinite loop, MPPT
@@ -155,6 +176,28 @@ __interrupt void DMA0_ISR (void)
     case 16: break;                          // Reserved
     default: break; 
   }   
+}
+
+// Timer0 A0 interrupt service routine
+#pragma vector=TIMER0_A0_VECTOR
+__interrupt void TIMER0_A0_ISR(void)
+{
+  if (count > INVERTCOUNT){
+    count = 0;
+    positive_toggle = !positive_toggle;
+    if (positive_toggle)
+      P3OUT ^= BIT5;                            // Toggle P3.5
+    else
+      P3OUT ^= BIT3;                            // Toggle P3.3
+  }else{
+    if(count == ZEROTIME){
+      if (positive_toggle)
+        P3OUT ^= BIT5;
+      else
+        P3OUT ^= BIT3;
+    }
+  }
+  count++;
 }
 
 
@@ -218,7 +261,6 @@ void adcRead (void)
 int Perturb (int dir)
 {
     int buff;
-    //long count;
     //Subroutine to change duty cycle
     if (dir > 1 || dir < 0)
     {
