@@ -106,8 +106,8 @@ void main(void) {
 
         if (voltage >= BATvMAX)
         {
-            //TD0CCR1 = 0;
-            //for (i = 0; i <= OVERCHARGE_WAIT; i++);
+            TD0CCR1 = 0;
+            for (i = 0; i <= OVERCHARGE_WAIT; i++);
             __no_operation();                   // BREAKPOINT
 
         }
