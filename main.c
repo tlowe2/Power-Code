@@ -21,9 +21,9 @@ int Sweep (void);
 #define PERTURBTIME         1000000	            // Time between perturb/observe cycles
 #define DELTA_D             5                   // Change between duty cycles for perturb
 
- // Inverter tuning parameters
+// Inverter tuning parameters
 #define INVERTCOUNT         517                 // This makes our inverter output = 60Hz
-#define ZEROTIME            450                 // This is how long the modified sine is zero for
+#define INVDUTY             350                 // This is how long the modified sine is zero for
 
 volatile int positive_toggle = 0;               // Toggles positive or negative side in timer
 volatile int count = 0;                         // Counter variable for timer interrupt
@@ -32,7 +32,7 @@ unsigned int ADC_Result[64];                    // A1 is evens, A0 is odds
 volatile unsigned int voltage, current;
 
 void main(void) {
-    unsigned int i;
+    //unsigned int i;
     int direction = 1;                // 1 is up, 0 is down
     unsigned int prev_I = 0;
     unsigned int this_I = 0;
@@ -190,7 +190,7 @@ __interrupt void TIMER0_A0_ISR(void)
     else
       P3OUT ^= BIT3;                            // Toggle P3.3
   }else{
-    if(count == ZEROTIME){
+    if(count == INVDUTY){
       if (positive_toggle)
         P3OUT ^= BIT5;
       else
