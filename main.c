@@ -15,7 +15,7 @@ int Sweep (void);
 // MPPT tuning parameters
 #define BATvMAX             350                 // 14.0V with our voltage sense circuit
 #define OVERCHARGE_WAIT     10000000            // Large number used to wait to check if charged
-#define INITIAL_PWM         1400                // Initial Duty cycle when buck starts 1400/2000 = 60%
+#define INITIAL_PWM         1460                // Initial Duty cycle when buck starts 1400/2000 = 60%
 #define SWEEPTIME           1500                // Sweep time
 #define SWEEPSTART          500	                // Beginning of sweep
 #define PERTURBTIME         1000000	            // Time between perturb/observe cycles
@@ -122,9 +122,9 @@ void main(void) {
 
     // Main MPPT loop                                         
     while(1) {									// Infinite loop, MPPT
-        
-        adcRead();
 
+        adcRead();
+/*
         if (voltage >= BATvMAX)
         {
             //TD0CCR1 = 0;
@@ -152,6 +152,7 @@ void main(void) {
             TD0CCR1 = current_duty;
             sweepcount = 0;
         }
+*/
         __no_operation();                   // BREAKPOINT
     }
 }
